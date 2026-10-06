@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>上海敲麻 - 单机版 v20261006.1720</title>
+<title>上海敲麻 - 单机版 v20261006.1920</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -2437,7 +2437,7 @@ class MahjongGame {
         } else {
             const opts = this.aiOpts();
             this.schedule(() => {
-                if (huInfo) { this.doHu(player, null, true, { gangKai }); return; }
+                if (huInfo) { this.doHu(player, this.drawnTile, true, { gangKai }); return; }
                 if (angangTile && AIPlayer.shouldGang(player, angangTile, opts, true, this)) {
                     this.doAnGang(player, angangTile);
                     return;
@@ -2498,7 +2498,8 @@ class MahjongGame {
         document.getElementById('action-buttons').innerHTML = '';
         document.getElementById('hint-text').textContent = '';
         this.enableDiscard = false;
-        this.doHu(this.players[0], null, true, { gangKai: !!this._curGangKai });
+        // 自摸：把实际摸到的那张牌传给 doHu，作为「胡牌张」（否则会取排序后最后一张，展示错误）
+        this.doHu(this.players[0], this.drawnTile, true, { gangKai: !!this._curGangKai });
     }
 
     humanAnGang() {
