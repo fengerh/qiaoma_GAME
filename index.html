@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>上海敲麻 - 单机版 v20261006.1630</title>
+<title>上海敲麻 - 单机版 v20261006.1720</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -999,6 +999,17 @@ body {
     min-height: 18px;   /* 预留高度，避免有/无提示文字时容器高度变化导致手牌跳动 */
 }
 
+/* 常驻报听状态提示：一花「无法报听」/ 二花「需要自摸」 */
+.knock-status {
+    color: #ffcc66;
+    font-size: 13px;
+    font-weight: bold;
+    margin-top: 4px;
+    text-align: center;
+    min-height: 18px;   /* 始终占位，避免有/无内容时手牌跳动 */
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
 /* ===== 移动端横屏适配（iPhone / iPad 横屏）===== */
 /* 横屏下高度是瓶颈：压缩左右 AI 的竖排手牌与弃牌区，保证全部可见可点 */
 @media (orientation: landscape) {
@@ -1115,6 +1126,7 @@ body {
         <div class="meld-area" id="meld-0"></div>
         <div class="flower-area" id="flower-0"></div>
         <div class="hand-tiles" id="hand-0"></div>
+        <div class="knock-status" id="knock-status"></div>
         <div class="hint-text" id="hint-text"></div>
     </div>
 
@@ -2361,6 +2373,20 @@ class MahjongGame {
         return ok;
     }
 
+    // 常驻状态行：一花听牌 → 无法报听；二花听牌（点炮不能胡）→ 需要自摸；其余不显示
+    updateKnockStatus() {
+        const el = document.getElementById('knock-status');
+        if (!el) return;
+        const me = this.players[0];
+        let text = '';
+        if (me && !me.isHu && HuChecker.tingTiles(me.hand, me.melds).length > 0 && !this.canRonAnyTing(me)) {
+            const fl = HuChecker.rawFlower(me);
+            if (fl === 1) text = '无法报听，目前一花';
+            else if (fl === 2) text = `目前${this.cnNum(fl)}花，需要自摸`;
+        }
+        el.textContent = text;
+    }
+
     // 执行「敲」（报听）：手牌锁定，只能摸什么打什么，允许暗杠/补杠
     doKnock(player) {
         player.isKnocked = true;
@@ -3577,6 +3603,7 @@ class MahjongGame {
         this.renderInfo();
         this.renderLastDiscard();
         document.getElementById('wall-count').textContent = this.wall.length;
+        this.updateKnockStatus();
     }
 
     renderLastDiscard() {
