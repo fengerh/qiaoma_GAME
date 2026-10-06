@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>上海敲麻 - 单机版 v20261006.1410</title>
+<title>上海敲麻 - 单机版 v20261006.1630</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -1168,7 +1168,11 @@ class Tile {
     }
     toString() {
         if (this.suit === FLOWER_SUIT) return FLOWER_NAMES[this.value] || '花';
-        if (this.suit === HONOR_SUIT) return HONOR_NAMES[this.value] || '字';
+        if (this.suit === HONOR_SUIT) {
+            const n = HONOR_NAMES[this.value] || '字';
+            // 报牌/文案读作「东风、南风、西风、北风」（牌面仍绘制单个字）
+            return (this.value >= 1 && this.value <= 4) ? `${n}风` : n;
+        }
         return `${this.value}${SUIT_NAMES[this.suit]}`;
     }
     equals(other) { return this.suit === other.suit && this.value === other.value; }
@@ -1386,23 +1390,26 @@ class HuChecker {
     }
 
     // ---------- 花数统计 ----------
-    // 原始花数 = 花牌张数 + 东南西北成刻组数 + 杠次数×2
+    // 原始花数 = 花牌张数 + 东南西北成刻组数 + 已杠出的杠数×2
+    // 注意：手上未杠出的 4 张不计花（只有 melds 里已杠出的才算）
     static rawFlower(player) {
         let flower = 0;
         for (const f of player.flowers) flower += 1;  // 花牌每张 1 花
+        for (const m of player.melds) {
+            if (m.type === 'gang' || m.type === 'angang' || m.type === 'bugang') flower += 2; // 已杠出每次 2 花
+        }
+        // 东南西北成刻（碰出或手内暗刻）1 花；副露中的杠不再参与计数
         const counts = {};
         const add = (t) => { counts[t.id] = (counts[t.id] || 0) + 1; };
         for (const t of player.hand) add(t);
-        for (const m of player.melds) for (const t of m.tiles) add(t);
+        for (const m of player.melds) {
+            if (m.type === 'gang' || m.type === 'angang' || m.type === 'bugang') continue;
+            for (const t of m.tiles) add(t);
+        }
         for (const id in counts) {
             const suit = id.split('_')[0];
             if (suit === FLOWER_SUIT) continue;       // 花牌已单独统计
-            const n = counts[id];
-            if (n >= 4) {
-                flower += 2;                          // 杠（明/暗/补、含风向杠）各 2 花
-            } else if (n === 3 && suit === HONOR_SUIT) {
-                flower += 1;                          // 东南西北成刻（碰出或手内暗刻）1 花
-            }
+            if (counts[id] >= 3 && suit === HONOR_SUIT) flower += 1;  // 东南西北成刻
         }
         return flower;
     }
@@ -1460,6 +1467,26 @@ class HuChecker {
     static mustRon(player, huTile, ctx = {}) {
         if (this.effFlower(player) < 3) return false;
         return !!this.canRon(player, huTile, ctx);
+    }
+
+    // 报听资格：手牌处于静止听牌时，只要存在某张听牌张满足自摸门槛（有番型 或 有效花≥2）即可报听
+    // （自摸门槛比点炮门槛宽松，故"能自摸"即涵盖"能点炮"）
+    static knockable(player) {
+        const ting = this.tingTiles(player.hand, player.melds);
+        if (!ting.length) return false;
+        const savedHand = player.hand;
+        const savedK = player.isKnocked;
+        player.isKnocked = true; // 临时置位，便于 canTsumo 判定
+        let ok = false;
+        for (const id of ting) {
+            const [s, v] = id.split('_');
+            player.hand = [...savedHand, new Tile(s, parseInt(v))];
+            const canT = !!this.canTsumo(player, {});
+            player.hand = savedHand;
+            if (canT) { ok = true; break; }
+        }
+        player.isKnocked = savedK;
+        return ok;
     }
 }
 
@@ -2221,6 +2248,7 @@ class MahjongGame {
         this.updateGameTitle();
         this._resultSaved = false; // 新一局允许重新记录历史
         this._roundFirstWinner = null;
+        this._lastHuPlayerId = null;
         // 庄家 = 上一局胡牌者（首局/无记录时为本人）
         this.dealerId = (this.lastRoundWinnerId !== undefined && this.lastRoundWinnerId !== null) ? this.lastRoundWinnerId : 0;
         this.turnCount = 0;
@@ -2251,6 +2279,7 @@ class MahjongGame {
     // 一旦摸到花牌即自动收入花区，并继续从牌墙「末尾」补牌，直到补到非花牌（或牌墙耗尽）。
     // 返回 { tile, flowered, fromBack }，tile 为最终入手牌的非花牌（可能为 null）。
     drawFromWall(player, silent = false, fromBack = false) {
+        const flBefore = HuChecker.rawFlower(player); // 记录补花前花数（用于"捉冲"提示）
         if (this.wall.length === 0) return { tile: null, flowered: false, fromBack };
         let tile = fromBack ? this.wall.pop() : this.wall.shift();  // 杠后取末尾，正常取前端
         let flowered = false;
@@ -2263,6 +2292,13 @@ class MahjongGame {
         if (flowered && !silent) {
             this.speak('补花');
             this.showToast(`${player.isHuman ? '你' : 'AI·' + this.seatName(player.id)} 补花 +${player.flowers.length}花`);
+        }
+        // 花数跨过 3 花（点炮门槛）且已报听 → 现在可以胡点炮了（覆盖上一条 toast）
+        if (!silent) {
+            const flAfter = HuChecker.rawFlower(player);
+            if (flBefore < 3 && flAfter >= 3 && player.isHuman && player.isKnocked) {
+                this.showToast('已经可以捉冲了！');
+            }
         }
         return { tile, flowered, fromBack };
     }
@@ -2287,33 +2323,35 @@ class MahjongGame {
         const res = [];
         const seen = new Set();
         const savedHand = player.hand;
-        const savedKnock = player.isKnocked;
         for (let i = 0; i < savedHand.length; i++) {
             const t = savedHand[i];
             if (seen.has(t.id)) continue;
             seen.add(t.id);
-            player.hand = savedHand.filter((_, k) => k !== i);
-            player.isKnocked = true; // 临时置为已敲，便于用 canRon 判定资格
-            const ting = HuChecker.tingTiles(player.hand, player.melds);
-            let ok = false;
-            for (const id of ting) {
-                const [s, v] = id.split('_');
-                if (HuChecker.canRon(player, new Tile(s, parseInt(v)), {})) { ok = true; break; }
-            }
-            player.isKnocked = savedKnock;
+            player.hand = savedHand.filter((_, k) => k !== i); // 打出后 13 张
+            if (HuChecker.knockable(player)) res.push(i);
             player.hand = savedHand;
-            if (ok) res.push(i);
         }
         return res;
     }
 
-    // 是否可敲：当前手牌（出牌后）已听牌，且存在「符合胡牌资格（有番/够花）」的胡牌张
+    // 是否可敲：未敲未胡，且当前手牌已听牌并存在「至少能自摸胡」的听牌张（2 花即可报听）
     canKnock(player) {
         if (player.isKnocked || player.isHu) return false;
+        return HuChecker.knockable(player);
+    }
+
+    // 数字转中文（1~10），其余回退数字字符串（提示文案共用）
+    cnNum(n) {
+        const cn = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+        return (n >= 1 && n <= 10) ? cn[n] : String(n);
+    }
+
+    // 是否存在任一「听牌张」能点炮胡（false 表示只能自摸）
+    canRonAnyTing(player) {
         const ting = HuChecker.tingTiles(player.hand, player.melds);
         if (!ting.length) return false;
         const savedK = player.isKnocked;
-        player.isKnocked = true; // 临时置位，便于用 canRon 判定资格
+        player.isKnocked = true; // 临时置位，便于 canRon 判定
         let ok = false;
         for (const id of ting) {
             const [s, v] = id.split('_');
@@ -2328,7 +2366,7 @@ class MahjongGame {
         player.isKnocked = true;
         player.isTing = true;
         this.render();
-        this.speak('敲');
+        this.speak('报听');
         this.showToast(`${player.isHuman ? '你' : 'AI·' + this.seatName(player.id)} 报听（敲）！`);
     }
 
@@ -2383,11 +2421,11 @@ class MahjongGame {
                 // 未敲且「打一张即听牌」→ 评估是否报听
                 const cands = this.knockDiscardCandidates(player);
                 if (cands.length && AIPlayer.shouldKnock(player, this, opts)) {
-                    // 报听：打出候选张（优先打刚摸到的，否则取第一个候选）
+                    // 报听：先出牌（照常播牌名），再报听（播「报听」，后一句自然盖掉牌名）
                     let kIdx = cands.find(i => this.drawnTile && player.hand[i].id === this.drawnTile.id);
                     if (kIdx === undefined) kIdx = cands[0];
-                    this.doKnock(player);
                     this.doDiscard(player, kIdx);
+                    this.doKnock(player);
                     return;
                 }
                 // 已报听：只能摸打刚摸到的牌
@@ -2505,6 +2543,12 @@ class MahjongGame {
             this.askKnock();
             return;
         }
+        // 已听牌但达不到报听资格（典型：一花平胡）→ 说明原因，避免"看似能报却报不了"
+        if (player.isHuman && !player.isKnocked && !player.isHu
+            && HuChecker.tingTiles(player.hand, player.melds).length > 0) {
+            const fl = HuChecker.rawFlower(player);
+            this.showToast(fl === 1 ? '无法报听，目前一花' : `无法报听，目前${this.cnNum(fl)}花`);
+        }
         // 检查其他玩家能否 胡/杠/碰/吃
         this.schedule(() => this.checkOtherActions(tile, player.id), 400);
     }
@@ -2513,10 +2557,16 @@ class MahjongGame {
     askKnock() {
         this._awaitKnock = true;
         this.enableDiscard = false;
+        const me = this.players[0];
+        let hint = '你已听牌，是否报听（敲）？';
+        // 点炮不能胡（只能自摸，典型=二花平胡）→ 补注说明
+        if (!this.canRonAnyTing(me)) {
+            hint = `你已听牌，是否报听（敲）？（目前${this.cnNum(HuChecker.rawFlower(me))}花，需要自摸）`;
+        }
         document.getElementById('action-buttons').innerHTML =
             `<button class="action-btn btn-qiao" onclick="game.confirmKnock()">敲（报听）</button>`
           + `<button class="action-btn btn-pass" onclick="game.skipKnock()">不报</button>`;
-        document.getElementById('hint-text').textContent = '你已听牌，是否报听（敲）？';
+        document.getElementById('hint-text').textContent = hint;
     }
 
     confirmKnock() {
@@ -2647,29 +2697,32 @@ class MahjongGame {
     showPengGangHuOptions(player, tile, type, mustRon = false) {
         const fromNote = `（来自${this.seatName(this.lastDiscardFrom)}）`;
         const buttons = [];
-        if (type === 'hu') {
+        // 已报听（敲）者手牌锁定：不得碰/吃/明杠（会拆掉听牌导致卡死），只给「胡」与「过」
+        const knocked = !!player.isKnocked;
+        // 只有已报听（敲）者才能胡；未敲者即使牌型成立也不可胡（渲染层兜底）
+        if (type === 'hu' && knocked) {
             buttons.push(`<button class="action-btn btn-hu" onclick="game.doHuFromDiscard(${player.id})">胡${fromNote}</button>`);
         }
-        if (type === 'gang' || type === 'hu') {
+        if (!knocked && (type === 'gang' || type === 'hu')) {
             const count = player.hand.filter(t => t.suit === tile.suit && t.value === tile.value).length;
             if (count === 3) {
                 buttons.push(`<button class="action-btn btn-gang" onclick="game.doMingGangFromUI(${player.id})">杠${fromNote}</button>`);
             }
         }
-        if (type === 'peng' || type === 'gang' || type === 'hu') {
+        if (!knocked && (type === 'peng' || type === 'gang' || type === 'hu')) {
             const count = player.hand.filter(t => t.suit === tile.suit && t.value === tile.value).length;
             if (count >= 2) {
                 buttons.push(`<button class="action-btn btn-peng" onclick="game.doPengFromUI(${player.id})">碰${fromNote}</button>`);
             }
         }
-        if (type === 'chi' && this.pending && this.pending.chiCombos) {
+        if (!knocked && type === 'chi' && this.pending && this.pending.chiCombos) {
             this.pending.chiCombos.forEach((combo, k) => {
                 const label = combo.map(t => t.toString()).join('');
                 buttons.push(`<button class="action-btn btn-chi" onclick="game.doChiFromUI(${player.id}, ${k})">吃 ${label}</button>`);
             });
         }
-        // 花数≥3 点炮必胡：不提供「过」
-        if (!(type === 'hu' && mustRon)) {
+        // 已报听（敲）者只能胡，不提供「过」；非报听者仍按"花数≥3 点炮必胡"不给「过」
+        if (!knocked && !(type === 'hu' && mustRon)) {
             buttons.push(`<button class="action-btn btn-pass" onclick="game.passAction()">过</button>`);
         }
 
@@ -2701,6 +2754,7 @@ class MahjongGame {
 
     doPengFromUI(pid) {
         document.getElementById('action-buttons').innerHTML = '';
+        if (this.players[pid].isKnocked) return; // 报听者不得碰（双保险）
         if (this.pending) {
             this.pending.huPlayers = [];   // 碰吃掉该牌
             this.pending.gangPlayer = null;
@@ -2711,6 +2765,7 @@ class MahjongGame {
 
     doChiFromUI(pid, k) {
         document.getElementById('action-buttons').innerHTML = '';
+        if (this.players[pid].isKnocked) return; // 报听者不得吃（双保险）
         const combo = this.pending.chiCombos[k];
         if (this.pending) {
             this.pending.huPlayers = [];
@@ -2748,6 +2803,8 @@ class MahjongGame {
             this.enableDiscard = false;
         }
         this.huCount++;
+        // 记录最后一个胡牌者（一铳二取第二个），用于决定由谁的下家继续摸打
+        this._lastHuPlayerId = player.id;
         // 记录本局第一个胡牌者作为下一局庄家（血战取第一个，而非最后一个；流局则保持不变）
         if (this._roundFirstWinner === null || this._roundFirstWinner === undefined) {
             this._roundFirstWinner = player.id;
@@ -2779,7 +2836,14 @@ class MahjongGame {
         const active = this.players.filter(p => !p.isHu);
         if (!this.bloodBattle) { this.schedule(() => this.endGame(), 2000); return; }
         if (active.length <= 1 || this.huCount >= 3) { this.schedule(() => this.endGame(), 2000); return; }
-        this.schedule(() => { this.nextPlayer(); this.gameLoop(); }, 2000);
+        // 由「最后一个胡牌者」的下家继续摸打（一铳二取第二个胡者；自摸者即胡者，同样适用）
+        this.schedule(() => {
+            if (this._lastHuPlayerId !== null && this._lastHuPlayerId !== undefined) {
+                this.currentPlayer = this._lastHuPlayerId;
+            }
+            this.nextPlayer();   // 跳过已胡者，落在胡牌者的下家（或其后第一个未胡者）
+            this.gameLoop();
+        }, 2000);
     }
 
     settleHu(winner, fanInfo, isZiMo) {
@@ -2812,6 +2876,7 @@ class MahjongGame {
     }
 
     doPeng(player, tile, fromId) {
+        if (player.isKnocked) return; // 报听者手牌锁定，不得碰
         const pengCount = player.hand.filter(t => t.suit === tile.suit && t.value === tile.value).length;
         if (pengCount === 3) { this.doMingGang(player, tile, fromId); return; }
         let removed = 0;
@@ -2840,6 +2905,7 @@ class MahjongGame {
 
     // 吃（仅吃上家打出的牌）
     doChi(player, tile, fromId, combo) {
+        if (player.isKnocked) return; // 报听者手牌锁定，不得吃
         for (const t of combo) player.removeTile(t);
         this.players[fromId].discards.pop();
         const tiles = [...combo, tile];
@@ -2870,11 +2936,7 @@ class MahjongGame {
         });
         this.players[fromId].discards.pop();
         player.melds.push({ type: 'gang', tiles: [tile, tile, tile, tile] });
-        // 明杠（点杠）：由放杠者付 2 分
-        const loser = this.players[fromId];
-        if (loser && loser.id !== player.id && !loser.isHu) {
-            loser.score -= 2; player.score += 2; player.gangScore += 2;
-        }
+        // 杠不单独结算、不向任何人收钱；价值只体现在"花"里（已杠出每次 2 花）
         player.gangCounts.ming++;
         player.sortHand();
         this.currentPlayer = player.id;
@@ -2882,19 +2944,14 @@ class MahjongGame {
         this._drawFromBack = true; // 杠后从牌堆末尾摸牌
         this.render();
         this.speak('杠');
-        this.showToast(`${player.isHuman ? '你' : 'AI·' + this.seatName(player.id)} 明杠！+2`);
+        this.showToast(`${player.isHuman ? '你' : 'AI·' + this.seatName(player.id)} 明杠！`);
         this.schedule(() => this.gameLoop(), 800);
     }
 
     doAnGang(player, tile) {
         player.hand = player.hand.filter(t => !(t.suit === tile.suit && t.value === tile.value));
         player.melds.push({ type: 'angang', tiles: [tile, tile, tile, tile] });
-        // 暗杠：每家付 2 分（已胡者不参与）
-        for (let i = 0; i < 4; i++) {
-            if (i !== player.id && !this.players[i].isHu) {
-                this.players[i].score -= 2; player.score += 2; player.gangScore += 2;
-            }
-        }
+        // 杠不单独结算、不向任何人收钱；价值只体现在"花"里（已杠出每次 2 花）
         player.gangCounts.an++;
         player.sortHand();
         this.currentPlayer = player.id;
@@ -2902,7 +2959,7 @@ class MahjongGame {
         this._drawFromBack = true;
         this.render();
         this.speak('杠');
-        this.showToast(`${player.isHuman ? '你' : 'AI·' + this.seatName(player.id)} 暗杠！+2`);
+        this.showToast(`${player.isHuman ? '你' : 'AI·' + this.seatName(player.id)} 暗杠！`);
         this.schedule(() => this.gameLoop(), 800);
     }
 
@@ -2921,12 +2978,7 @@ class MahjongGame {
         meld.type = 'bugang';
         meld.tiles.push(tile);
         player.removeTile(tile);
-        // 补杠：每家付 1 分（已胡者不参与）
-        for (let i = 0; i < 4; i++) {
-            if (i !== player.id && !this.players[i].isHu) {
-                this.players[i].score -= 1; player.score += 1; player.gangScore += 1;
-            }
-        }
+        // 杠不单独结算、不向任何人收钱；价值只体现在"花"里（已杠出每次 2 花）
         player.gangCounts.bu++;
         player.sortHand();
         this.currentPlayer = player.id;
@@ -2934,7 +2986,7 @@ class MahjongGame {
         this._drawFromBack = true;
         this.render();
         this.speak('杠');
-        this.showToast(`${player.isHuman ? '你' : 'AI·' + this.seatName(player.id)} 补杠！+1`);
+        this.showToast(`${player.isHuman ? '你' : 'AI·' + this.seatName(player.id)} 补杠！`);
         this.schedule(() => this.gameLoop(), 800);
     }
 
@@ -3055,10 +3107,6 @@ class MahjongGame {
                 const base = hi.base || (bp + fl);
                 const pay = hi.pay || (base * hi.fan);
                 detail += `<div class="result-detail">${huWay} ｜ 胡牌: ${tileName} ｜ 底分${bp}+花${fl}=基数${base} × ${hi.fan}番 = ${pay}分 (${hi.fanList.join('+')})</div>`;
-            }
-            if (p.gangScore > 0) {
-                const g = p.gangCounts;
-                detail += `<div class="result-detail">杠 明×${g.ming} 暗×${g.an} 补×${g.bu} (+${p.gangScore})</div>`;
             }
             if (p.flowers && p.flowers.length) {
                 detail += `<div class="result-detail">花 ${p.flowers.map(f => f.toString()).join('')} (${p.flowers.length}花)</div>`;
