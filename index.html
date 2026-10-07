@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>上海敲麻 - 单机版 v20261007.1850</title>
+<title>上海敲麻 - 单机版 v20261007.1950</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -761,6 +761,14 @@ body {
 .hist-head:hover { background: rgba(0,0,0,0.04); }
 .hist-detail {
     padding: 0 8px 8px;
+}
+/* 历史明细：胡牌顺序/结算去向（单元格内多条流水分行展示） */
+.hd .pay-flow {
+    display: inline-block;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: normal;
+    word-break: break-all;
 }
 /* 积分榜弹窗加宽，避免明细被截断 */
 .lb-modal { max-width: 760px; max-height: 90vh; overflow-y: auto; }
@@ -2361,6 +2369,7 @@ class MahjongGame {
         this._resultSaved = false; // 新一局允许重新记录历史
         this._roundFirstWinner = null;
         this._lastHuPlayerId = null;
+        this._huSequence = [];     // 本局胡牌顺序与资金流（供历史明细展示）
         // 庄家 = 上一局胡牌者（首局/无记录时为本人）
         this.dealerId = (this.lastRoundWinnerId !== undefined && this.lastRoundWinnerId !== null) ? this.lastRoundWinnerId : 0;
         this.turnCount = 0;
@@ -2998,6 +3007,26 @@ class MahjongGame {
         winner.huInfo.base = base;
         winner.huInfo.pay = pay;
 
+        // 记录资金流与胡牌顺序（仅记录，不改变任何金额与规则）
+        const flows = [];
+        const payTo = (fromId, amount) => { if (amount) flows.push({ from: fromId, to: winner.id, amount }); };
+        const record = () => {
+            winner.huInfo.pays = flows.slice();
+            if (!this._huSequence) this._huSequence = [];
+            this._huSequence.push({
+                winnerId: winner.id,
+                isZiMo: !!isZiMo,
+                isQiangGang: !!winner.huInfo.isQiangGang,
+                fromId: winner.huInfo.fromId,
+                fan: fan,
+                fanList: (winner.huInfo.fanList || []).slice(),
+                pay: pay,
+                baoHu: winner.huInfo.baoHu
+                    ? { kind: winner.huInfo.baoHu.kind, amount: winner.huInfo.baoHu.amount } : null,
+                flows: flows.slice()
+            });
+        };
+
         // 「吃三口包胡」（开关开启时）：支持多个关系人，各自按口诀结算，其余人按原规则
         const mates = (this.baoHuRule ? this.baoHuPartners(winner) : [])
             .filter(id => { const q = this.players[id]; return q && !q.isHu; }); // 血战中已胡者不参与
@@ -3008,9 +3037,11 @@ class MahjongGame {
                 for (const id of mates) {
                     const q = this.players[id];
                     q.score -= pay * 5; winner.score += pay * 5;
+                    payTo(id, pay * 5);
                     paid.add(id);
                 }
                 winner.huInfo.baoHu = { kind: '自摸包胡', partners: mates.slice(), amount: pay * 5 * mates.length };
+                record();
                 return;
             }
             const loser = this.players[this.lastDiscardFrom];
@@ -3019,6 +3050,7 @@ class MahjongGame {
                 const isMateLoser = mates.includes(loser.id);
                 const loseAmt = isMateLoser ? pay * 2 : pay;
                 loser.score -= loseAmt; winner.score += loseAmt;
+                payTo(loser.id, loseAmt);
                 paid.add(loser.id);
                 // 其余关系人各连带 1 份
                 let extra = 0;
@@ -3026,12 +3058,14 @@ class MahjongGame {
                     if (paid.has(id)) continue;
                     const q = this.players[id];
                     q.score -= pay; winner.score += pay; extra += pay;
+                    payTo(id, pay);
                 }
                 winner.huInfo.baoHu = {
                     kind: isMateLoser ? '关系人互炮' : '外人点炮连带',
                     partners: mates.slice(),
                     amount: loseAmt + extra
                 };
+                record();
                 return;
             }
         }
@@ -3041,6 +3075,7 @@ class MahjongGame {
                 if (p.id === winner.id || p.isHu) continue;
                 p.score -= pay;
                 winner.score += pay;
+                payTo(p.id, pay);
             }
         } else {
             // 点炮：放炮者付
@@ -3048,8 +3083,10 @@ class MahjongGame {
             if (loser && loser.id !== winner.id) {
                 loser.score -= pay;
                 winner.score += pay;
+                payTo(loser.id, pay);
             }
         }
+        record();
     }
 
     doPeng(player, tile, fromId) {
@@ -3219,6 +3256,7 @@ class MahjongGame {
             p.isTing = p.tingFan > 0;
         }
         const cap = this.maxFan || Infinity;
+        const flows = []; // 查叫赔付流水（供历史明细展示，金额与规则不变）
         for (const p of this.players) {
             if (p.isHu || p.isTing) continue;
             for (const t of this.players) {
@@ -3227,7 +3265,12 @@ class MahjongGame {
                 const pay = ((this.baseScore || 2) + HuChecker.effFlower(t)) * Math.min(t.tingFan, cap);
                 p.score -= pay;
                 t.score += pay;
+                flows.push({ from: p.id, to: t.id, amount: pay });
             }
+        }
+        if (flows.length) {
+            if (!this._huSequence) this._huSequence = [];
+            this._huSequence.push({ kind: 'liuJu', flows: flows.slice() });
         }
         this.showResultModal('🀄 流局：未听牌者赔给听牌者（底分 + 花） × 叫番');
     }
@@ -3328,7 +3371,12 @@ class MahjongGame {
                     gang: { ming: p.gangCounts.ming, an: p.gangCounts.an, bu: p.gangCounts.bu, score: p.gangScore }
                 };
             });
-            this.history.push({ t: new Date().toISOString(), scores: this.players.map(p => p.score), details });
+            this.history.push({
+                t: new Date().toISOString(),
+                scores: this.players.map(p => p.score),
+                details,
+                huSequence: (this._huSequence || []).slice()
+            });
             this.saveHistory();
             this.totalScore += this.players[0].score;
         }
@@ -3615,13 +3663,41 @@ class MahjongGame {
                 let detail = '';
                 const hasDetails = rec.details && rec.details.length === 4;
                 const statusText = { hu: '✅ 胡牌', ting: '👂 听牌', none: '❌ 未听' };
-                const head = `<div class="hd hd-head">名字</div><div class="hd hd-head">分数</div><div class="hd hd-head">胡状态</div><div class="hd hd-head">杠状态</div>`;
-                const buildRow = (name, score, huHtml, gangHtml) => {
+                const head = `<div class="hd hd-head">名字</div><div class="hd hd-head">分数</div><div class="hd hd-head">胡状态</div><div class="hd hd-head">胡牌顺序/结算去向</div>`;
+                const buildRow = (name, score, huHtml, payHtml) => {
                     const dcls = score >= 0 ? 'positive' : 'negative';
                     return `<div class="hd">${name}</div>` +
                         `<div class="hd score ${dcls}">${score >= 0 ? '+' : ''}${score}</div>` +
                         `<div class="hd">${huHtml}</div>` +
-                        `<div class="hd">${gangHtml}</div>`;
+                        `<div class="hd">${payHtml}</div>`;
+                };
+                // 胡牌顺序/结算去向：按胡牌先后逐条列出与本行玩家(j)相关的流水
+                // 形如「1. 东自摸：你→东20、北→东20」；旧记录无 huSequence 时回退到原「杠」文本
+                const nm = id => ['你', '东', '北', '西'][id];
+                const seq = rec.huSequence || [];
+                // 只在"收钱方"那一行写内容：胡牌者行带序号与来源；流局时听牌者行写「流局查叫」（不占序号）；付钱方留空
+                const payLinesFor = (j) => {
+                    const lines = [];
+                    let huIdx = 0;   // 仅胡牌条目计序号（流局条目不占号）
+                    seq.forEach((h) => {
+                        if (h.kind === 'liuJu') {
+                            const got = (h.flows || []).filter(f => f.to === j);
+                            if (got.length) {
+                                lines.push(`流局查叫：${got.map(f => `${nm(f.from)}→${nm(f.to)} ${f.amount}`).join('、')}`);
+                            }
+                            return;
+                        }
+                        huIdx += 1;
+                        if (h.winnerId !== j) return;   // 不是本次胡牌者 → 不写
+                        const got = (h.flows || []).filter(f => f.to === j);   // 各家给他的钱
+                        const src = h.isZiMo ? `${nm(h.winnerId)}自摸`
+                            : (h.isQiangGang ? `抢杠胡·来自${nm(h.fromId)}` : `${nm(h.winnerId)}点炮·来自${nm(h.fromId)}`);
+                        const parts = got.length
+                            ? got.map(f => `${nm(f.from)}→${nm(f.to)} ${f.amount}`).join('、')
+                            : '无赔付';
+                        lines.push(`${huIdx}. ${src}：${parts}`);
+                    });
+                    return lines;
                 };
                 if (hasDetails) {
                     let body = '';
@@ -3641,12 +3717,18 @@ class MahjongGame {
                             if (d.status === 'ting' && d.tingFan) st += ` · ${d.tingFan}番`;
                             huHtml = st;
                         }
-                        let gangHtml = '';
-                        if (d.gang && d.gang.score > 0) {
+                        let payHtml = '';
+                        if (seq.length) {
+                            const lines = payLinesFor(j);
+                            payHtml = lines.length
+                                ? `<span class="pay-flow">${lines.join('<br>')}</span>`
+                                : '';
+                        } else if (d.gang && d.gang.score > 0) {
+                            // 旧记录（无 huSequence）：回退显示原「杠」文本
                             const g = d.gang;
-                            gangHtml = `明×${g.ming} 暗×${g.an} 补×${g.bu} (+${g.score})`;
+                            payHtml = `明×${g.ming} 暗×${g.an} 补×${g.bu} (+${g.score})`;
                         }
-                        body += buildRow(names[j], d.score, huHtml, gangHtml);
+                        body += buildRow(names[j], d.score, huHtml, payHtml);
                     });
                     detail = `<div class="hist-table">${head}${body}</div>`;
                 } else {
