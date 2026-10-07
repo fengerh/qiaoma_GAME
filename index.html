@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>上海敲麻 - 单机版 v20261006.1920</title>
+<title>上海敲麻 - 单机版 v20261007.1130</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -2373,16 +2373,26 @@ class MahjongGame {
         return ok;
     }
 
-    // 常驻状态行：一花听牌 → 无法报听；二花听牌（点炮不能胡）→ 需要自摸；其余不显示
+    // 常驻状态行：
+    //   1花+有番（点炮可胡）→ 「目前一花（有番可胡）」
+    //   1花+平胡（报了也胡不了）→ 「无法报听，目前一花」
+    //   2花（只能自摸）      → 「目前二花，需要自摸」
+    //   其余（0花/≥3花/未听牌/已胡）→ 不显示
     updateKnockStatus() {
         const el = document.getElementById('knock-status');
         if (!el) return;
         const me = this.players[0];
         let text = '';
-        if (me && !me.isHu && HuChecker.tingTiles(me.hand, me.melds).length > 0 && !this.canRonAnyTing(me)) {
+        if (me && !me.isHu && HuChecker.tingTiles(me.hand, me.melds).length > 0) {
             const fl = HuChecker.rawFlower(me);
-            if (fl === 1) text = '无法报听，目前一花';
-            else if (fl === 2) text = `目前${this.cnNum(fl)}花，需要自摸`;
+            if (this.canRonAnyTing(me)) {
+                // 点炮即可胡：1 花时说明"有番可胡"（0花/≥3花无需提示）
+                if (fl === 1) text = '目前一花（有番可胡）';
+            } else if (fl === 1) {
+                text = '目前一花，无法报听';
+            } else if (fl === 2) {
+                text = `目前${this.cnNum(fl)}花，需要自摸`;
+            }
         }
         el.textContent = text;
     }
@@ -2574,7 +2584,7 @@ class MahjongGame {
         if (player.isHuman && !player.isKnocked && !player.isHu
             && HuChecker.tingTiles(player.hand, player.melds).length > 0) {
             const fl = HuChecker.rawFlower(player);
-            this.showToast(fl === 1 ? '无法报听，目前一花' : `无法报听，目前${this.cnNum(fl)}花`);
+            this.showToast(fl === 1 ? '目前一花，无法报听' : `目前${this.cnNum(fl)}花，无法报听`);
         }
         // 检查其他玩家能否 胡/杠/碰/吃
         this.schedule(() => this.checkOtherActions(tile, player.id), 400);
