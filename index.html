@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>上海敲麻 - 单机版 v20261006.1920</title>
+<title>上海敲麻 - 单机版 v20261007.1210</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -377,6 +377,26 @@ body {
     display: flex;
     gap: 8px;
     margin-top: 5px;
+}
+
+/* 副露来源标记：标在"那一张外来牌"的右上角（东/北/西/你） */
+.meld-area .tile.from-tile {
+    position: relative;
+    box-shadow: 0 0 0 1px rgba(255, 215, 0, 0.85), 1px 2px 4px rgba(0, 0, 0, 0.4);
+}
+.meld-area .tile.from-tile::after {
+    content: attr(data-from);
+    position: absolute;
+    top: -7px;
+    right: -5px;
+    font-size: 10px;
+    line-height: 1.25;
+    padding: 0 3px;
+    border-radius: 4px;
+    color: #ffd700;
+    background: rgba(0, 0, 0, 0.7);
+    box-shadow: 0 0 4px rgba(255, 215, 0, 0.6);
+    pointer-events: none;
 }
 
 /* 花牌区：与吃碰杠副露区区分开（淡黄底 + 虚线框），全场公开 */
@@ -2373,16 +2393,26 @@ class MahjongGame {
         return ok;
     }
 
-    // 常驻状态行：一花听牌 → 无法报听；二花听牌（点炮不能胡）→ 需要自摸；其余不显示
+    // 常驻状态行：
+    //   1花+有番（点炮可胡）→ 「目前一花（有番可胡）」
+    //   1花+平胡（报了也胡不了）→ 「无法报听，目前一花」
+    //   2花（只能自摸）      → 「目前二花，需要自摸」
+    //   其余（0花/≥3花/未听牌/已胡）→ 不显示
     updateKnockStatus() {
         const el = document.getElementById('knock-status');
         if (!el) return;
         const me = this.players[0];
         let text = '';
-        if (me && !me.isHu && HuChecker.tingTiles(me.hand, me.melds).length > 0 && !this.canRonAnyTing(me)) {
+        if (me && !me.isHu && HuChecker.tingTiles(me.hand, me.melds).length > 0) {
             const fl = HuChecker.rawFlower(me);
-            if (fl === 1) text = '无法报听，目前一花';
-            else if (fl === 2) text = `目前${this.cnNum(fl)}花，需要自摸`;
+            if (this.canRonAnyTing(me)) {
+                // 点炮即可胡：1 花时说明"有番可胡"（0花/≥3花无需提示）
+                if (fl === 1) text = '目前一花（有番可胡）';
+            } else if (fl === 1) {
+                text = '目前一花，无法报听';
+            } else if (fl === 2) {
+                text = `目前${this.cnNum(fl)}花，需要自摸`;
+            }
         }
         el.textContent = text;
     }
@@ -2574,7 +2604,7 @@ class MahjongGame {
         if (player.isHuman && !player.isKnocked && !player.isHu
             && HuChecker.tingTiles(player.hand, player.melds).length > 0) {
             const fl = HuChecker.rawFlower(player);
-            this.showToast(fl === 1 ? '无法报听，目前一花' : `无法报听，目前${this.cnNum(fl)}花`);
+            this.showToast(fl === 1 ? '目前一花，无法报听' : `目前${this.cnNum(fl)}花，无法报听`);
         }
         // 检查其他玩家能否 胡/杠/碰/吃
         this.schedule(() => this.checkOtherActions(tile, player.id), 400);
@@ -2912,7 +2942,8 @@ class MahjongGame {
             return true;
         });
         this.players[fromId].discards.pop();
-        player.melds.push({ type: 'peng', tiles: [tile, tile, tile] });
+        // 记录来源：fromId = 打出这张牌的人；fromTileId = 那张"外来牌"的 id（用于在牌面上标注来源）
+        player.melds.push({ type: 'peng', tiles: [tile, tile, tile], fromId, fromTileId: tile.id });
         player.sortHand();
         this.currentPlayer = player.id;
         this.pending = null;
@@ -2937,7 +2968,7 @@ class MahjongGame {
         this.players[fromId].discards.pop();
         const tiles = [...combo, tile];
         tiles.sort((a, b) => a.value - b.value);
-        player.melds.push({ type: 'chi', tiles });
+        player.melds.push({ type: 'chi', tiles, fromId, fromTileId: tile.id }); // 记录来源与外来牌 id
         player.sortHand();
         this.currentPlayer = player.id;
         this.pending = null;
@@ -2962,7 +2993,7 @@ class MahjongGame {
             return true;
         });
         this.players[fromId].discards.pop();
-        player.melds.push({ type: 'gang', tiles: [tile, tile, tile, tile] });
+        player.melds.push({ type: 'gang', tiles: [tile, tile, tile, tile], fromId, fromTileId: tile.id });
         // 杠不单独结算、不向任何人收钱；价值只体现在"花"里（已杠出每次 2 花）
         player.gangCounts.ming++;
         player.sortHand();
@@ -3695,6 +3726,7 @@ class MahjongGame {
                 const group = document.createElement('div');
                 group.className = 'meld-group';
                 const showCount = meld.type === 'angang' ? 4 : meld.tiles.length;
+                let fromMarked = false; // 同一副露只标一张"外来牌"
                 for (let j = 0; j < showCount; j++) {
                     if (meld.type === 'angang' && j > 0 && j < 3) {
                         // 暗杠中间两张显示背面
@@ -3706,6 +3738,14 @@ class MahjongGame {
                     } else {
                         const el = this.createTileElement(meld.tiles[j], -1);
                         el.style.cursor = 'default';
+                        // 在"这一张牌"上标注它来自谁（吃/碰/明杠的外来牌；暗杠无来源）
+                        if (!fromMarked && meld.fromId !== undefined && meld.fromId !== null
+                            && meld.type !== 'angang' && meld.tiles[j] && meld.tiles[j].id === meld.fromTileId) {
+                            el.classList.add('from-tile');
+                            el.setAttribute('data-from', this.seatName(meld.fromId));
+                            el.title = `${meld.tiles[j].toString()} 来自${this.seatName(meld.fromId)}`;
+                            fromMarked = true;
+                        }
                         group.appendChild(el);
                     }
                 }
