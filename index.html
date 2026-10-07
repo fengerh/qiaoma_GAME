@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>上海敲麻 - 单机版 v20261007.1210</title>
+<title>上海敲麻 - 单机版 v20261007.1850</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -108,6 +108,20 @@ body {
     padding: 0 5px;
     border-radius: 6px;
     margin-right: 2px;
+}
+
+/* 「三口」（吃三口包胡）关系标记：金色小徽标 */
+.player-info .baohu-badge {
+    display: inline-block;
+    font-size: 11px;
+    line-height: 1;
+    padding: 2px 4px;
+    margin-left: 4px;
+    border-radius: 4px;
+    color: #3a2a00;
+    background: linear-gradient(180deg, #ffe08a, #f0b429);
+    box-shadow: 0 0 4px rgba(255, 215, 0, 0.6);
+    font-weight: bold;
 }
 
 /* 「敲」（报听）标记：金色呼吸光晕 */
@@ -1070,6 +1084,67 @@ body {
     #last-discard .ld-label { font-size: 11px; padding: 1px 8px; }
     /* 操作按钮在矮屏下略缩但仍 ≥44px 触控友好 */
     .action-btn { padding: 10px 18px; font-size: 15px; }
+
+    /* ===== 增强：底部手牌/副露/花牌缩小，四家占比收窄，按钮贴底 ===== */
+    /* 底部自己的手牌整体缩小，保证 14 张 + 副露不溢出屏幕宽度 */
+    .tile { width: 32px; height: 44px; }
+    /* 我方副露与花牌同步缩小（左右 AI 的 22×30 由上方既有规则覆盖，保持更小） */
+    .meld-group .tile { width: 24px; height: 34px; }
+    .flower-area .tile { width: 24px; height: 34px; }
+    .flower-area .tile .tile-value { font-size: 11px; }
+    .flower-area .tile .tile-suit { font-size: 6px; }
+    /* 顶部与底部玩家的牌背同步缩小 */
+    #player-top .tile-back, #player-bottom .tile-back { width: 26px; height: 15px; }
+
+    /* 玩家区占比收窄，四家彼此拉开 */
+    #player-bottom { bottom: 12%; width: 78%; }
+    #player-top { top: 9%; width: 78%; }
+    #player-left { left: 6%; height: 68%; }
+    #player-right { right: 6%; height: 68%; }
+    .side-content { max-width: 96px; }
+    #player-left .meld-area, #player-right .meld-area { gap: 4px; }
+    #player-left .discard-area, #player-right .discard-area { max-width: 84px; }
+
+    /* 状态行与顶部按钮收紧 */
+    .knock-status, .hint-text { font-size: 10px; min-height: 13px; margin-top: 2px; }
+    #top-actions { gap: 6px; }
+    #top-actions button { font-size: 11px; padding: 3px 6px; }
+
+    /* 操作按钮贴近底部，避免压住手牌与状态行 */
+    #action-buttons { bottom: 6px; }
+}
+
+/* ===== iPad 横屏适配（11 寸 1194x834 / mini 1133x744 等）===== */
+/* 该区间比手机大、比桌面矮，原有规则都不命中 → 元素互相压。
+   做法：整体收一档尺寸 + 收窄玩家区占比 + 分离按钮与手牌。 */
+@media (orientation: landscape) and (min-width: 1000px) and (max-height: 1050px) {
+    /* 1. 牌面与字号整体缩小约 15%，直接缓解拥挤 */
+    .tile { width: 36px; height: 50px; }
+    .discard-area .tile { width: 26px; height: 36px; }
+    .meld-group .tile { width: 26px; height: 36px; }
+    .flower-area .tile { width: 26px; height: 36px; }
+    .flower-area .tile .tile-value { font-size: 12px; }
+    .flower-area .tile .tile-suit { font-size: 7px; }
+    #player-left .meld-area .tile, #player-right .meld-area .tile { width: 24px; height: 34px; }
+
+    /* 2. 玩家区占比收窄，避免四家互相侵入 */
+    #player-bottom { bottom: 11%; width: 76%; }
+    #player-top { top: 10%; width: 76%; }
+    #player-left { left: 7%; height: 70%; }
+    #player-right { right: 7%; height: 70%; }
+    #player-left .discard-area, #player-right .discard-area { max-width: 108px; }
+    .side-content { max-width: 112px; }
+
+    /* 3. 左右 AI 竖排手牌（背面）收紧 */
+    #player-left .tile-back, #player-right .tile-back { width: 30px; height: 18px; }
+
+    /* 4. 文字层级收紧 */
+    .player-info { font-size: 11px; padding: 2px 8px; margin-bottom: 3px; }
+    .knock-status, .hint-text { font-size: 11px; min-height: 15px; margin-top: 3px; }
+
+    /* 5. 操作按钮与手牌分层（避免压住手牌/状态行） */
+    #action-buttons { bottom: 8px; }
+    #top-actions button { font-size: 12px; padding: 4px 8px; }
 }
 
 /* 牌样预览画廊（双击左上角总分弹出，便于调整牌面样式） */
@@ -2162,6 +2237,11 @@ class MahjongGame {
             const bb = localStorage.getItem('qiaoma_bloodbattle');
             if (bb === '1') this.bloodBattle = true;
         } catch (e) { /* localStorage 不可用时不报错 */ }
+        this.baoHuRule = false; // 吃三口包胡，默认关闭
+        try {
+            const bh = localStorage.getItem('qiaoma_baohu');
+            if (bh === '1') this.baoHuRule = true;
+        } catch (e) { /* localStorage 不可用时不报错 */ }
         this.soundEnabled = true; // 语音播报默认开启
         this.init();
         this.showStartModal(); // 进入页面先弹设置，点「开始游戏」才发牌
@@ -2753,6 +2833,8 @@ class MahjongGame {
 
     showPengGangHuOptions(player, tile, type, mustRon = false) {
         const fromNote = `（来自${this.seatName(this.lastDiscardFrom)}）`;
+        // 这一口若成为对同一家的第三口（包胡开关开启时）→ 在按钮上提示
+        const thirdNote = (this.baoHuRule && this.willBeThirdMouth(player, this.lastDiscardFrom)) ? '（第三口）' : '';
         const buttons = [];
         // 已报听（敲）者手牌锁定：不得碰/吃/明杠（会拆掉听牌导致卡死），只给「胡」与「过」
         const knocked = !!player.isKnocked;
@@ -2763,19 +2845,19 @@ class MahjongGame {
         if (!knocked && (type === 'gang' || type === 'hu')) {
             const count = player.hand.filter(t => t.suit === tile.suit && t.value === tile.value).length;
             if (count === 3) {
-                buttons.push(`<button class="action-btn btn-gang" onclick="game.doMingGangFromUI(${player.id})">杠${fromNote}</button>`);
+                buttons.push(`<button class="action-btn btn-gang" onclick="game.doMingGangFromUI(${player.id})">杠${fromNote}${thirdNote}</button>`);
             }
         }
         if (!knocked && (type === 'peng' || type === 'gang' || type === 'hu')) {
             const count = player.hand.filter(t => t.suit === tile.suit && t.value === tile.value).length;
             if (count >= 2) {
-                buttons.push(`<button class="action-btn btn-peng" onclick="game.doPengFromUI(${player.id})">碰${fromNote}</button>`);
+                buttons.push(`<button class="action-btn btn-peng" onclick="game.doPengFromUI(${player.id})">碰${fromNote}${thirdNote}</button>`);
             }
         }
         if (!knocked && type === 'chi' && this.pending && this.pending.chiCombos) {
             this.pending.chiCombos.forEach((combo, k) => {
                 const label = combo.map(t => t.toString()).join('');
-                buttons.push(`<button class="action-btn btn-chi" onclick="game.doChiFromUI(${player.id}, ${k})">吃 ${label}</button>`);
+                buttons.push(`<button class="action-btn btn-chi" onclick="game.doChiFromUI(${player.id}, ${k})">吃 ${label}${thirdNote}</button>`);
             });
         }
         // 已报听（敲）者只能胡，不提供「过」；非报听者仍按"花数≥3 点炮必胡"不给「过」
@@ -2915,6 +2997,44 @@ class MahjongGame {
         winner.huInfo.flower = flower;
         winner.huInfo.base = base;
         winner.huInfo.pay = pay;
+
+        // 「吃三口包胡」（开关开启时）：支持多个关系人，各自按口诀结算，其余人按原规则
+        const mates = (this.baoHuRule ? this.baoHuPartners(winner) : [])
+            .filter(id => { const q = this.players[id]; return q && !q.isHu; }); // 血战中已胡者不参与
+        if (mates.length) {
+            const paid = new Set(); // 已付过"单份"的人，避免重复
+            if (isZiMo) {
+                // 自摸：每个关系人各包 5 份，外人不掏
+                for (const id of mates) {
+                    const q = this.players[id];
+                    q.score -= pay * 5; winner.score += pay * 5;
+                    paid.add(id);
+                }
+                winner.huInfo.baoHu = { kind: '自摸包胡', partners: mates.slice(), amount: pay * 5 * mates.length };
+                return;
+            }
+            const loser = this.players[this.lastDiscardFrom];
+            if (loser && loser.id !== winner.id) {
+                // 放炮者若本身就是关系人 → 按"互炮"付 2 份；否则外人付 1 份
+                const isMateLoser = mates.includes(loser.id);
+                const loseAmt = isMateLoser ? pay * 2 : pay;
+                loser.score -= loseAmt; winner.score += loseAmt;
+                paid.add(loser.id);
+                // 其余关系人各连带 1 份
+                let extra = 0;
+                for (const id of mates) {
+                    if (paid.has(id)) continue;
+                    const q = this.players[id];
+                    q.score -= pay; winner.score += pay; extra += pay;
+                }
+                winner.huInfo.baoHu = {
+                    kind: isMateLoser ? '关系人互炮' : '外人点炮连带',
+                    partners: mates.slice(),
+                    amount: loseAmt + extra
+                };
+                return;
+            }
+        }
         if (isZiMo) {
             // 自摸：所有未胡玩家各付一份（血战中已胡者不付）
             for (const p of this.players) {
@@ -2950,6 +3070,7 @@ class MahjongGame {
         this.render();
         this.speak('碰');
         this.showToast(`${player.isHuman ? '你' : 'AI·' + this.seatName(player.id)} 碰！`);
+        this.maybeAnnounceBaoHu(player);
         if (player.isHuman) {
             this.enableDiscard = true;
             document.getElementById('hint-text').textContent = '碰了！请点击手牌出牌';
@@ -2975,6 +3096,7 @@ class MahjongGame {
         this.render();
         this.speak('吃');
         this.showToast(`${player.isHuman ? '你' : 'AI·' + this.seatName(player.id)} 吃！`);
+        this.maybeAnnounceBaoHu(player);
         if (player.isHuman) {
             this.enableDiscard = true;
             document.getElementById('hint-text').textContent = '吃了！请点击手牌出牌';
@@ -3003,6 +3125,7 @@ class MahjongGame {
         this.render();
         this.speak('杠');
         this.showToast(`${player.isHuman ? '你' : 'AI·' + this.seatName(player.id)} 明杠！`);
+        this.maybeAnnounceBaoHu(player);
         this.schedule(() => this.gameLoop(), 800);
     }
 
@@ -3165,6 +3288,12 @@ class MahjongGame {
                 const base = hi.base || (bp + fl);
                 const pay = hi.pay || (base * hi.fan);
                 detail += `<div class="result-detail">${huWay} ｜ 胡牌: ${tileName} ｜ 底分${bp}+花${fl}=基数${base} × ${hi.fan}番 = ${pay}分 (${hi.fanList.join('+')})</div>`;
+                if (hi.baoHu) {
+                    const bIds = hi.baoHu.partners
+                        || ((hi.baoHu.partner !== undefined && hi.baoHu.partner !== null) ? [hi.baoHu.partner] : []);
+                    const bNames = bIds.map(i => (this.players[i] && this.players[i].isHuman) ? '你' : ['', '东', '北', '西'][i]).join('、');
+                    detail += `<div class="result-detail">🀄 包胡（${hi.baoHu.kind}）：${bNames} 包 ${hi.baoHu.amount} 分</div>`;
+                }
             }
             if (p.flowers && p.flowers.length) {
                 detail += `<div class="result-detail">花 ${p.flowers.map(f => f.toString()).join('')} (${p.flowers.length}花)</div>`;
@@ -3289,6 +3418,15 @@ class MahjongGame {
                             <input id="bloodbattle-input" type="checkbox" ${this.bloodBattle ? 'checked' : ''} style="width:18px;height:18px;">
                             <span>启用「胡到底」</span>
                         </label>
+                    </div>
+
+                    <div class="settings-section">
+                        <h3>🀄 吃三口包胡</h3>
+                        <p style="font-size:13px;color:#666;">开启后：某人被同一家喂满三副副露（吃/碰/明杠，含补杠）即与之形成「三口关系」。此后二人之间任一人胡牌按包胡结算——自摸时对方包 5 份、外人不掏；外人点炮则外人 1 份 + 关系人连带 1 份；关系人互炮直接 2 份。默认关闭。</p>
+                        <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:#333;cursor:pointer;">
+                            <input id="baohu-input" type="checkbox" ${this.baoHuRule ? 'checked' : ''} style="width:18px;height:18px;">
+                            <span>启用「吃三口包胡」</span>
+                        </label>
                     </div>`;
     }
 
@@ -3305,18 +3443,82 @@ class MahjongGame {
         this.baseScore = (isNaN(bs) || bs < 1) ? 2 : bs;
         const bbEl = document.getElementById('bloodbattle-input');
         if (bbEl) this.bloodBattle = !!bbEl.checked;
+        const bhEl = document.getElementById('baohu-input');
+        if (bhEl) this.baoHuRule = !!bhEl.checked;
         try {
             localStorage.setItem('qiaoma_ailevel', this.aiLevel);
             localStorage.setItem('qiaoma_bloodbattle', this.bloodBattle ? '1' : '0');
+            localStorage.setItem('qiaoma_baohu', this.baoHuRule ? '1' : '0');
         } catch (e) { /* 忽略 */ }
         this.updateGameTitle();
     }
 
-    // 左上角标题牌文案：随「胡到底（血战到底）」开关切换
+    // 左上角标题牌文案：按开关叠加后缀（胡到底 / 包三口）
     updateGameTitle() {
         const el = document.getElementById('game-title');
         if (!el) return;
-        el.textContent = this.bloodBattle ? '上海麻将（敲麻）· 胡到底' : '上海麻将（敲麻）';
+        let title = '上海麻将（敲麻）';
+        if (this.bloodBattle) title += ' · 胡到底';
+        if (this.baoHuRule) title += ' · 包三口';
+        el.textContent = title;
+    }
+
+    // 三口关系（双向、可多个）：返回所有与 player 构成三口关系的对方 id（去重）
+    // 副露的 fromId 只记在接受方一方，故必须双向查找，否则反向（被吃方胡牌）不生效
+    baoHuPartners(player) {
+        const res = [];
+        // ① 自己吃/碰/明杠了对方三口（副露 fromId 统计；暗杠无来源不计）
+        const counts = {};
+        for (const m of player.melds) {
+            if (m.type === 'angang') continue;
+            if (m.fromId === undefined || m.fromId === null) continue;
+            counts[m.fromId] = (counts[m.fromId] || 0) + 1;
+        }
+        for (const id in counts) {
+            const nid = parseInt(id, 10);
+            if (counts[id] >= 3 && !res.includes(nid)) res.push(nid);
+        }
+        // ② 对方吃/碰/明杠了 player 三口（反向同样构成三口关系）
+        for (const other of this.players) {
+            if (!other || other.id === player.id) continue;
+            let n = 0;
+            for (const m of other.melds) {
+                if (m.type === 'angang') continue;
+                if (m.fromId === player.id) n++;
+            }
+            if (n >= 3 && !res.includes(other.id)) res.push(other.id);
+        }
+        return res;
+    }
+
+    // 兼容：返回第一个关系对象（无则 null）
+    baoHuPartner(player) {
+        const arr = this.baoHuPartners(player);
+        return arr.length ? arr[0] : null;
+    }
+
+    // 本次吃/碰/明杠是否会成为"对这一家的第三口"（此前已有 2 副非暗杠副露来自该家）
+    willBeThirdMouth(player, fromId) {
+        if (fromId === undefined || fromId === null) return false;
+        let n = 0;
+        for (const m of player.melds) {
+            if (m.type === 'angang') continue;
+            if (m.fromId === fromId) n++;
+        }
+        return n === 2;
+    }
+
+    // 三口关系刚成立时按对象各提示一次（仅开关开启）
+    maybeAnnounceBaoHu(player) {
+        if (!this.baoHuRule) return;
+        if (!player._baoHuAnnouncedIds) player._baoHuAnnouncedIds = [];
+        for (const pid of this.baoHuPartners(player)) {
+            if (player._baoHuAnnouncedIds.includes(pid)) continue;
+            player._baoHuAnnouncedIds.push(pid);
+            const who = player.isHuman ? '你' : 'AI·' + this.seatName(player.id);
+            const other = (this.players[pid] && this.players[pid].isHuman) ? '你' : 'AI·' + this.seatName(pid);
+            this.showToast(`⚠️ ${who} 与 ${other} 形成三口关系：包胡生效`);
+        }
     }
 
     // 设置中心（游戏中调整）
@@ -3774,6 +3976,14 @@ class MahjongGame {
             const p = this.players[i];
             const name = i === 0 ? '你' : 'AI·' + ['','东','北','西'][i];
             const knockText = p.isKnocked ? '<span class="knock-badge">敲</span>' : '';
+            // 三口关系（吃三口包胡）成立后持续展示，标明对方方位（可能有多家）
+            let baoHuText = '';
+            if (this.baoHuRule) {
+                for (const bid of this.baoHuPartners(p)) {
+                    const bnm = this.seatName(bid);
+                    baoHuText += ` <span class="baohu-badge" title="与${bnm}形成三口关系：包胡生效">三口·${bnm}</span>`;
+                }
+            }
             const flowerText = (p.flowers && p.flowers.length) ? `<span class="flower-info">花${p.flowers.length}</span>` : '';
             let huText = '';
             if (p.isHu && p.huInfo) {
@@ -3788,7 +3998,7 @@ class MahjongGame {
                 }
             }
             const dealerText = (i === this.dealerId) ? ' <span class="dealer-badge">庄</span>' : '';
-            info.innerHTML = `${name}${dealerText}${knockText} ${flowerText}${huText} [${p.score}]`;
+            info.innerHTML = `${name}${dealerText}${knockText}${baoHuText} ${flowerText}${huText} [${p.score}]`;
             info.className = 'player-info' + (this.currentPlayer === i && this.phase === 'play' ? ' active' : '');
         }
     }
