@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>上海敲麻 - 单机版 v20261007.1950</title>
+<title>上海敲麻 - 单机版 v20261008.2130</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -3022,7 +3022,12 @@ class MahjongGame {
                 fanList: (winner.huInfo.fanList || []).slice(),
                 pay: pay,
                 baoHu: winner.huInfo.baoHu
-                    ? { kind: winner.huInfo.baoHu.kind, amount: winner.huInfo.baoHu.amount } : null,
+                    ? {
+                        kind: winner.huInfo.baoHu.kind,
+                        amount: winner.huInfo.baoHu.amount,
+                        partners: (winner.huInfo.baoHu.partners || []).slice()
+                      }
+                    : null,
                 flows: flows.slice()
             });
         };
@@ -3692,8 +3697,12 @@ class MahjongGame {
                         const got = (h.flows || []).filter(f => f.to === j);   // 各家给他的钱
                         const src = h.isZiMo ? `${nm(h.winnerId)}自摸`
                             : (h.isQiangGang ? `抢杠胡·来自${nm(h.fromId)}` : `${nm(h.winnerId)}点炮·来自${nm(h.fromId)}`);
+                        const baoPartners = (h.baoHu && h.baoHu.partners) || [];
                         const parts = got.length
-                            ? got.map(f => `${nm(f.from)}→${nm(f.to)} ${f.amount}`).join('、')
+                            ? got.map(f => {
+                                const tag = baoPartners.indexOf(f.from) >= 0 ? '（包三口）' : '';
+                                return `${nm(f.from)}→${nm(f.to)} ${f.amount}${tag}`;
+                              }).join('、')
                             : '无赔付';
                         lines.push(`${huIdx}. ${src}：${parts}`);
                     });
