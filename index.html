@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>上海敲麻 - 单机版 v20261008.2130</title>
+<title>上海敲麻 - 单机版 v20261029.2300</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -2415,12 +2415,7 @@ class MahjongGame {
             this.showToast(`${player.isHuman ? '你' : 'AI·' + this.seatName(player.id)} 补花 +${player.flowers.length}花`);
         }
         // 花数跨过 3 花（点炮门槛）且已报听 → 现在可以胡点炮了（覆盖上一条 toast）
-        if (!silent) {
-            const flAfter = HuChecker.rawFlower(player);
-            if (flBefore < 3 && flAfter >= 3 && player.isHuman && player.isKnocked) {
-                this.showToast('已经可以捉冲了！');
-            }
-        }
+        if (!silent) this.maybeZhuoChongToast(player, flBefore);
         return { tile, flowered, fromBack };
     }
 
@@ -2545,18 +2540,19 @@ class MahjongGame {
         const gangKai = fromBack || drawn.flowered;
         this._curGangKai = gangKai; // 供人类自摸时使用
 
-        // 暗杠 / 补杠 候选
-        const angangTile = this.checkAnGang(player);
+        // 暗杠 / 补杠 候选（报听后仅保留「杠完仍听牌」的候选）
+        const angangCands = this.anGangCandidates(player);
 
         // 自摸胡：须已敲 + 达到番/花门槛
         const huInfo = HuChecker.canTsumo(player, { gangKai });
 
         if (player.isHuman) {
-            this.showHumanActions(huInfo, angangTile, drawn.tile);
+            this.showHumanActions(huInfo, angangCands, drawn.tile);
         } else {
             const opts = this.aiOpts();
             this.schedule(() => {
                 if (huInfo) { this.doHu(player, this.drawnTile, true, { gangKai }); return; }
+                const angangTile = angangCands[0] || null;
                 if (angangTile && AIPlayer.shouldGang(player, angangTile, opts, true, this)) {
                     this.doAnGang(player, angangTile);
                     return;
@@ -2588,15 +2584,16 @@ class MahjongGame {
         return id === 0 ? '你' : ['', '东', '北', '西'][id] || ('家' + id);
     }
 
-    showHumanActions(huInfo, angangTile, drawnTile) {
+    showHumanActions(huInfo, angangCands, drawnTile) {
         const me = this.players[0];
         const buttons = [];
         if (huInfo) {
             buttons.push(`<button class="action-btn btn-hu" onclick="game.humanHu()">胡（自摸·${huInfo.fan}番）</button>`);
         }
-        if (angangTile) {
-            buttons.push(`<button class="action-btn btn-gang" onclick="game.humanAnGang()">杠(${angangTile.toString()}·自摸)</button>`);
-        }
+        // 暗杠：每个候选一个按钮（同持两组四张时可自行选择杠哪一组）
+        (angangCands || []).forEach((t, i) => {
+            buttons.push(`<button class="action-btn btn-gang" onclick="game.humanAnGang(${i})">暗杠(${t.toString()}·自摸)</button>`);
+        });
         const bugangTile = this.checkBuGang(me);
         if (bugangTile) {
             buttons.push(`<button class="action-btn btn-gang" onclick="game.humanBuGang()">补杠(${bugangTile.toString()}·自摸)</button>`);
@@ -2621,17 +2618,28 @@ class MahjongGame {
         this.doHu(this.players[0], this.drawnTile, true, { gangKai: !!this._curGangKai });
     }
 
-    humanAnGang() {
+    humanAnGang(idx = 0) {
         this.selectedIndex = -1;
         document.getElementById('action-buttons').innerHTML = '';
-        const tile = this.checkAnGang(this.players[0]);
+        // 杠后需从牌尾补牌才能继续，先锁住出牌，避免补牌前抢出
+        this.enableDiscard = false;
+        this.drawnTile = null;
+        document.getElementById('hint-text').textContent = '';
+        const cands = this.anGangCandidates(this.players[0]);
+        const tile = cands[idx] || cands[0] || null;
+        if (!tile) { this.humanPass(); return; }
         this.doAnGang(this.players[0], tile);
     }
 
     humanBuGang() {
         this.selectedIndex = -1;
         document.getElementById('action-buttons').innerHTML = '';
+        // 同上：补杠后需补牌，先锁住出牌
+        this.enableDiscard = false;
+        this.drawnTile = null;
+        document.getElementById('hint-text').textContent = '';
         const tile = this.checkBuGang(this.players[0]);
+        if (!tile) { this.humanPass(); return; }
         this.doBuGang(this.players[0], tile);
     }
 
@@ -2941,8 +2949,12 @@ class MahjongGame {
             // 自摸：牌已在手牌中，无需再加入
         } else {
             player.addTile(tile);
-            const fromPlayer = this.players[this.lastDiscardFrom];
-            if (fromPlayer && fromPlayer.discards.length) fromPlayer.discards.pop();
+            // 点炮：该牌原本躺在出铳者牌河里，需同步出栈；
+            // 抢杠：该牌来自补杠者手牌（doBuGang 中已 removeTile），不在牌河，不能出栈（否则会误删一张无关弃牌）
+            if (!ctx.qiangGang) {
+                const fromPlayer = this.players[this.lastDiscardFrom];
+                if (fromPlayer && fromPlayer.discards.length) fromPlayer.discards.pop();
+            }
         }
         player.isHu = true;
         if (player.isHuman) {
@@ -3151,6 +3163,9 @@ class MahjongGame {
     }
 
     doMingGang(player, tile, fromId) {
+        // 杠后须从牌尾补牌，期间锁住出牌（防补牌前抢出）
+        this.enableDiscard = false;
+        this.drawnTile = null;
         let removed = 0;
         player.hand = player.hand.filter(t => {
             if (removed < 3 && t.suit === tile.suit && t.value === tile.value) { removed++; return false; }
@@ -3172,6 +3187,10 @@ class MahjongGame {
     }
 
     doAnGang(player, tile) {
+        // 杠后须从牌尾补牌，期间锁住出牌（防补牌前抢出）
+        this.enableDiscard = false;
+        this.drawnTile = null;
+        const flBefore = HuChecker.rawFlower(player); // 杠前花数（用于「可捉冲」提示）
         player.hand = player.hand.filter(t => !(t.suit === tile.suit && t.value === tile.value));
         player.melds.push({ type: 'angang', tiles: [tile, tile, tile, tile] });
         // 杠不单独结算、不向任何人收钱；价值只体现在"花"里（已杠出每次 2 花）
@@ -3183,12 +3202,17 @@ class MahjongGame {
         this.render();
         this.speak('杠');
         this.showToast(`${player.isHuman ? '你' : 'AI·' + this.seatName(player.id)} 暗杠！`);
+        this.maybeZhuoChongToast(player, flBefore);
         this.schedule(() => this.gameLoop(), 800);
     }
 
     doBuGang(player, tile) {
         const meld = player.melds.find(m => m.type === 'peng' && m.tiles[0].suit === tile.suit && m.tiles[0].value === tile.value);
         if (!meld) return;
+        // 杠后须从牌尾补牌，期间锁住出牌（防补牌前抢出）
+        this.enableDiscard = false;
+        this.drawnTile = null;
+        const flBefore = HuChecker.rawFlower(player); // 杠前花数（用于「可捉冲」提示）
         // 抢杠胡：任一已敲且有番的玩家可胡该牌，则取消补杠
         const robber = this.players.find(p => p.id !== player.id && !p.isHu && p.isKnocked
             && HuChecker.canRon(p, tile, { qiangGang: true }));
@@ -3210,21 +3234,39 @@ class MahjongGame {
         this.render();
         this.speak('杠');
         this.showToast(`${player.isHuman ? '你' : 'AI·' + this.seatName(player.id)} 补杠！`);
+        this.maybeZhuoChongToast(player, flBefore);
         this.schedule(() => this.gameLoop(), 800);
     }
 
-    checkAnGang(player) {
+    // 暗杠/补杠使花数跨过 3 花（捉冲门槛）且本人已报听 → 立即提示（与补花提示同文案）
+    maybeZhuoChongToast(player, flBefore) {
+        if (!player.isHuman || !player.isKnocked) return;
+        const flAfter = HuChecker.rawFlower(player);
+        if (flBefore < 3 && flAfter >= 3) this.showToast('已经可以捉冲了！');
+    }
+
+    // 暗杠候选：手牌中成四张的牌（同持多组四张时可分别选择）
+    // 报听（敲）后手牌锁定、只能摸打，若杠出 4 张后不再听牌将永远无法胡牌，
+    // 故报听时仅保留「杠完仍听牌」的候选（非报听玩家不受此限制）。
+    anGangCandidates(player) {
         const counts = {};
-        for (const t of player.hand) {
-            counts[t.id] = (counts[t.id] || 0) + 1;
-        }
+        for (const t of player.hand) counts[t.id] = (counts[t.id] || 0) + 1;
+        const res = [];
         for (const [id, count] of Object.entries(counts)) {
-            if (count === 4) {
-                const [suit, val] = id.split('_');
-                return new Tile(suit, parseInt(val));
+            if (count < 4) continue;
+            if (player.isKnocked) {
+                const rest = player.hand.filter(t => t.id !== id); // 杠掉这 4 张后的手牌
+                if (!HuChecker.tingTiles(rest, player.melds).length) continue; // 杠后不听 → 不提供该候选
             }
+            const [suit, val] = id.split('_');
+            res.push(new Tile(suit, parseInt(val)));
         }
-        return null;
+        return res;
+    }
+
+    // 兼容包装：取首个暗杠候选（AI 与旧调用点）
+    checkAnGang(player) {
+        return this.anGangCandidates(player)[0] || null;
     }
 
     checkBuGang(player) {
